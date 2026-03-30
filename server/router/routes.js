@@ -1,5 +1,7 @@
 const router = require('express').Router()
-const supabase = require('../config/supabase')
+const supabase = require('../config/supabase');
+const {Signup, sendOTP, verifyOTP}= require('../Controller/UserController');
+const {getRiderProfile} = require('../Controller/ZomatoController')
 
 router.post('/add', async (req, res) => {
   const { name, email, age } = req.body;
@@ -50,4 +52,11 @@ router.delete('/users/:id', async (req, res) => {
   res.json({ message: 'User Deleted' });
 });
 
+router.get('/zomato/v2/fleet/:fleetId/profile',getRiderProfile);
+router.get('/Test',Signup);
+router.post('/getOTP',sendOTP);
+router.post('/verifyOTP',verifyOTP);
+router.get('/health-check',(req,res)=>{
+  return res.status(200).json({"message":"Working!!"})
+})
 module.exports=router
