@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 
 const NAV_LINKS = ["How It Works", "Features", "Pricing", "Dashboard"];
 
@@ -207,6 +208,7 @@ function MiniChart() {
 }
 
 export default function LandingPage() {
+  const navigate = useNavigate();
   const [activeNav, setActiveNav] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [activePlan, setActivePlan] = useState(1);
@@ -235,8 +237,8 @@ export default function LandingPage() {
               </a>
             ))}
           </div>
-          <button style={styles.navCta} className="cta-btn">
-            Get Protected →
+          <button style={styles.navCta} className="cta-btn" onClick={() => navigate('/Auth')}>
+            Login / Sign Up
           </button>
         </div>
       </nav>
@@ -262,7 +264,7 @@ export default function LandingPage() {
             GigShield automatically detects the event and pays you — no claim forms, no waiting.
           </p>
           <div style={styles.heroActions} className="fade-up-delay-3">
-            <button style={styles.heroPrimary} className="cta-btn">
+            <button style={styles.heroPrimary} className="cta-btn" onClick={() => navigate('/Auth')}>
               Start for ₹29/week
             </button>
             <button style={styles.heroSecondary} className="ghost-btn">
@@ -462,6 +464,7 @@ export default function LandingPage() {
                 <button
                   style={{ ...styles.planBtn, background: plan.accent }}
                   className="cta-btn"
+                  onClick={() => navigate('/Auth')}
                 >
                   Get {plan.name}
                 </button>
@@ -568,7 +571,7 @@ export default function LandingPage() {
           <p style={styles.ctaSub}>
             Join 84,000+ delivery partners who've made disruptions irrelevant to their income.
           </p>
-          <button style={styles.ctaBtn} className="cta-btn">
+          <button style={styles.ctaBtn} className="cta-btn" onClick={() => navigate('/Auth')}>
             Get Protected for ₹29/week →
           </button>
           <div style={styles.ctaNote}>No paperwork. No health/life coverage. Income-only protection.</div>
