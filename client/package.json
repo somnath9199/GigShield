@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tomtom-international/web-sdk-maps": "^6.25.0",
+    "chart.js": "^4.5.1",
     "cors": "^2.8.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
