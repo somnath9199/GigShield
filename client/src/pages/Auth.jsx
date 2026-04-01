@@ -1,17 +1,10 @@
 import { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "../supabaseClient";
 
 /* ─── API base ─────────────────────────────────────────── */
-const BASE = "http://127.0.0.1:8000"; 
+// Replaced with Supabase client direct integration
 
-async function apiPost(path, body) {
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
-}
 
 /* ─── tiny helpers ──────────────────────────────────────── */
 const PLATFORMS = ["Zomato", "Swiggy", "Zepto", "Amazon", "Dunzo", "Blinkit"];
@@ -79,16 +72,27 @@ function LoginScreen({ onOtp }) {
   const [err, setErr] = useState("");
 
   const handle = async () => {
-    if (phone.replace(/\D/g, "").length < 10) {
+    const rawPhone = phone.replace(/\D/g, "");
+    if (rawPhone.length < 10) {
       setErr("Enter a valid 10-digit number.");
       return;
     }
     setErr("");
     setLoading(true);
-    const full = `+91${phone.replace(/\D/g, "").slice(-10)}`;
-    const { ok, data } = await apiPost("/api/getOTP", { Phone_no: full });
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('phone', rawPhone);
+
     setLoading(false);
-    if (!ok) { setErr(data.message || "Failed to send OTP."); return; }
+    
+    if (error || !data || data.length === 0) { 
+      setErr("User not found. Please create an account first."); 
+      return; 
+    }
+
+    const full = `+91${rawPhone.slice(-10)}`;
     onOtp(full);
   };
 
@@ -148,32 +152,36 @@ function SignupScreen({ onOtp, onLogin }) {
   };
 
   const submit = async () => {
-    if (!f.phone_number || f.phone_number.replace(/\D/g,"").length < 10) {
+    const rawPhone = f.phone_number.replace(/\D/g,"");
+    if (!rawPhone || rawPhone.length < 10) {
       setErr("Enter a valid phone number."); return;
     }
     setErr(""); setLoading(true);
 
     const payload = {
       rider_id: f.rider_id,
-      Name: f.Name,
+      name: f.Name,
       email: f.email,
       password: f.password,
-      phone_number: f.phone_number.replace(/\D/g,""),
+      phone: rawPhone,
+      isactive: true,
+      phone_number_verified: false
     };
 
-    // 1. Create user
-    const signup = await apiPost("/api/Test", payload);
-    if (!signup.ok) {
-      setLoading(false);
-      setErr(signup.data.message || "Signup failed. Check your Rider ID.");
+    // 1. Create user in Supabase public.users table
+    const { error } = await supabase
+      .from('users')
+      .insert([payload]);
+
+    setLoading(false);
+    
+    if (error) {
+      setErr(error.message || "Signup failed. Rider ID might already exist.");
       return;
     }
 
-    // 2. Send OTP
-    const full = `91${f.phone_number.replace(/\D/g,"").slice(-10)}`;
-    const otp = await apiPost("/sendOTP", { Phone_no: full });
-    setLoading(false);
-    if (!otp.ok) { setErr(otp.data.message || "OTP send failed."); return; }
+    // 2. Mock sending OTP
+    const full = `91${rawPhone.slice(-10)}`;
     onOtp(full, payload);
   };
 
@@ -296,18 +304,29 @@ function OtpScreen({ phone, payload, onSuccess, onBack }) {
     if (code.length < 6) { setErr("Enter the full 6-digit OTP."); return; }
     setErr(""); setLoading(true);
 
-    const { ok, data } = await apiPost("/api/verifyOTP", {
-      Phone_no: phone,
-      OTP: code,
-    });
+    // Mock OTP Verification (use 123456 as the demo OTP)
+    if (code !== '123456') { 
+      setLoading(false);
+      setErr("Invalid OTP. For demo purposes, use 123456"); 
+      return; 
+    }
+
+    // Update verified status
+    const rawPhone = phone.replace(/\D/g, "").slice(-10);
+    await supabase
+      .from('users')
+      .update({ phone_number_verified: true })
+      .eq('phone', rawPhone);
+
+    localStorage.setItem('userPhone', rawPhone);
+
     setLoading(false);
-    if (!ok) { setErr(data.message || "Invalid OTP. Please try again."); return; }
     onSuccess();
   };
 
   const resend = async () => {
     setResending(true);
-    await apiPost("/sendOTP", { Phone_no: phone });
+    await new Promise(r => setTimeout(r, 1000));
     setResending(false);
     setCountdown(30);
     setOtp(["","","","","",""]);
@@ -365,6 +384,7 @@ function OtpScreen({ phone, payload, onSuccess, onBack }) {
    DONE SCREEN
 ═══════════════════════════════════════════════════════════ */
 function DoneScreen() {
+  const navigate = useNavigate();
   return (
     <div className="anim-in done-screen">
       <div className="done-icon">✓</div>
@@ -385,7 +405,7 @@ function DoneScreen() {
           </div>
         ))}
       </div>
-      <button className="primary-btn">Go to Dashboard →</button>
+      <button className="primary-btn" onClick={() => navigate('/dashboard')}>Go to Dashboard →</button>
     </div>
   );
 }

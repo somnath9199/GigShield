@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { supabase } from "../supabaseClient";
 import {
   Chart,
   BarController,  
@@ -21,49 +22,7 @@ import "./Dashboard.css";
 
 Chart.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 
-/* ─── Mock data (replace with API calls) ───────────────────────
-   Swap these with:
-     const res = await fetch('/api/rider/dashboard');
-     const data = await res.json();
-   ─────────────────────────────────────────────────────────────── */
-const WEEKLY_LABELS = ["Mar 25", "Mar 26", "Mar 27", "Mar 28", "Mar 29", "Mar 30", "Mar 31"];
-const WEEKLY_PREMIUM = [40, 52, 38, 60, 45, 55, 187];
-const WEEKLY_PAYOUT  = [0,  0,  120, 0,  0,  300, 0];
-
-const STATS = [
-  {
-    id:    "coverage",
-    label: "Coverage",
-    value: "Active",
-    sub:   "Renews May 4",
-    color: "green",
-    icon:  "🛡️",
-  },
-  {
-    id:    "this-week",
-    label: "This Week",
-    value: "₹187",
-    sub:   "Premium paid",
-    color: "purple",
-    icon:  "📅",
-  },
-  {
-    id:    "total-received",
-    label: "Total Received",
-    value: "₹2,450",
-    sub:   "Lifetime payouts",
-    color: "teal",
-    icon:  "💳",
-  },
-  {
-    id:    "risk-status",
-    label: "Risk Status",
-    value: "Low",
-    sub:   "No flags this week",
-    color: "green",
-    icon:  "📊",
-  },
-];
+const WEEKLY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /* ─── Sub-components ────────────────────────────────────────── */
 
@@ -124,12 +83,12 @@ function DisruptionBanner({ onDismiss }) {
   );
 }
 
-function WeeklyChart() {
+function WeeklyChart({ premiums = [], payouts = [] }) {
   const canvasRef = useRef(null);
   const chartRef  = useRef(null);
 
-  const totalPremium = WEEKLY_PREMIUM.reduce((a, b) => a + b, 0);
-  const totalPayout  = WEEKLY_PAYOUT.reduce((a, b) => a + b, 0);
+  const totalPremium = premiums.reduce((a, b) => a + Number(b), 0);
+  const totalPayout  = payouts.reduce((a, b) => a + Number(b), 0);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -145,7 +104,7 @@ function WeeklyChart() {
         datasets: [
           {
             label:           "Premium",
-            data:            WEEKLY_PREMIUM,
+            data:            premiums,
             backgroundColor: "rgba(124, 110, 249, 0.8)",
             borderRadius:    5,
             borderSkipped:   false,
@@ -154,7 +113,7 @@ function WeeklyChart() {
           },
           {
             label:           "Payout",
-            data:            WEEKLY_PAYOUT,
+            data:            payouts,
             backgroundColor: "rgba(46, 196, 166, 0.8)",
             borderRadius:    5,
             borderSkipped:   false,
@@ -254,6 +213,17 @@ function WeeklyChart() {
 /* ─── Main Dashboard ────────────────────────────────────────── */
 const Dashboard = () => {
   const [showDisruption, setShowDisruption] = useState(true);
+  const [userData, setUserData] = useState(null);
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      const phone = localStorage.getItem('userPhone');
+      if (!phone) return;
+      const { data } = await supabase.from('users').select('*').eq('phone', phone).single();
+      if (data) setUserData(data);
+    };
+    fetchUser();
+  }, []);
 
   const today = new Date().toLocaleDateString("en-IN", {
     day:   "numeric",
@@ -261,12 +231,23 @@ const Dashboard = () => {
     year:  "numeric",
   });
 
+  if (!userData) {
+    return <div className="dashboard" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>;
+  }
+
+  const dynamicStats = [
+    { id: "coverage", label: "Coverage", value: userData.coverage_status || "Active", sub: "Renews Monday", color: "green", icon: "🛡️" },
+    { id: "this-week", label: "This Week", value: `₹${userData.this_week_premium}`, sub: "Premium paid", color: "purple", icon: "📅" },
+    { id: "total-received", label: "Total Received", value: `₹${Number(userData.total_received || 0).toLocaleString('en-IN')}`, sub: "Lifetime payouts", color: "teal", icon: "💳" },
+    { id: "risk-status", label: "Risk Status", value: "Low", sub: "No flags this week", color: "green", icon: "📊" },
+  ];
+
   return (
     <div className="dashboard">
       {/* Top bar */}
       <div className="topbar">
         <div className="topbar-left">
-          <span className="topbar-greeting">Welcome back, Arjun</span>
+          <span className="topbar-greeting">Welcome back, {userData.name ? userData.name.split(' ')[0] : 'Rider'}</span>
           <h1 className="topbar-title">Rider Dashboard</h1>
         </div>
         <div className="topbar-right">
@@ -280,12 +261,12 @@ const Dashboard = () => {
 
       {/* Stat cards */}
       <div className="stat-cards">
-        {STATS.map((s) => (
+        {dynamicStats.map((s) => (
           <StatCard key={s.id} {...s} />
         ))}
       </div>
 
-      <WeeklyChart />
+      <WeeklyChart premiums={userData.weekly_premiums || [0,0,0,0,0,0,0]} payouts={userData.weekly_payouts || [0,0,0,0,0,0,0]} />
 
       {/* Disruption banner */}
       {showDisruption && (
