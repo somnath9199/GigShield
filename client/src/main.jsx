@@ -12,6 +12,7 @@ import History from './pages/History.jsx'
 import AppLayout from './components/AppLayout.jsx'
 import Bankinfo from './pages/Bankinfo.jsx'
 import Profile from './pages/Profile.jsx'
+import RoadSense from './pages/Roadsense.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -19,6 +20,7 @@ createRoot(document.getElementById('root')).render(
     <Routes>
       <Route path='/' element={<LandingPage/>}/>
       <Route path='/Auth' element={<Auth/>}/>
+      <Route path='/path' element={<RoadSense/>}/>
       <Route path='/dashboard' element={<AppLayout/>}>
         <Route index element={<Dashboard/>}/>
         <Route path='live-location' element={<RiderLiveLocation/>}/>
