@@ -1,6 +1,3 @@
-// Mock rider database — simulates Swiggy/Zomato internal rider records
-// In production this would be their actual database
-
 const { v4: uuidv4 } = require('uuid');
 
 // Helper to generate order history for last N days

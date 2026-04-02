@@ -1,28 +1,89 @@
-import React, { useEffect, useRef, useState } from "react";
-import { supabase } from "../supabaseClient";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Chart,
-  BarController,  
-  BarElement,
+  LineController,
+  LineElement,
+  PointElement,
   CategoryScale,
   LinearScale,
   Tooltip,
   Legend,
+  Filler,
 } from "chart.js";
+import "./Dashboard.css";
 
 Chart.register(
-  BarController,   
-  BarElement,
+  LineController,
+  LineElement,
+  PointElement,
   CategoryScale,
   LinearScale,
   Tooltip,
-  Legend
+  Legend,
+  Filler
 );
-import "./Dashboard.css";
-
-Chart.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 
 const WEEKLY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const API_BASE = "http://localhost:8000/api";
+const DISRUPTION_API_BASE = "http://localhost:8000/api";
+
+/* ─── Helpers ────────────────────────────────────────── */
+
+const formatCurrency = (value) =>
+  `₹${Number(value || 0).toLocaleString("en-IN")}`;
+
+const formatDate = (value) => {
+  if (!value) return "-";
+  return new Date(value).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+const getWeekdayIndex = (value) => {
+  const jsDay = new Date(value).getDay(); // 0 Sun - 6 Sat
+  return jsDay === 0 ? 6 : jsDay - 1; // Mon = 0
+};
+
+const buildWeeklyPayoutSeries = (payouts = []) => {
+  const arr = [0, 0, 0, 0, 0, 0, 0];
+  const now = new Date();
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(now.getDate() - 6);
+
+  payouts.forEach((p) => {
+    const dt = new Date(p.paid_at || p.created_at);
+    if (dt >= sevenDaysAgo && p.status === "paid") {
+      const idx = getWeekdayIndex(dt);
+      arr[idx] += Number(p.amount || 0);
+    }
+  });
+
+  return arr;
+};
+
+const buildWeeklyPremiumSeries = (premium = 0, coverageStatus = "Inactive") => {
+  if (coverageStatus !== "Active") return [0, 0, 0, 0, 0, 0, 0];
+  const dailyValue = Number(premium || 0);
+  return [dailyValue, dailyValue, dailyValue, dailyValue, dailyValue, dailyValue, dailyValue];
+};
+
+const getRiskInfo = (disruptionCheck) => {
+  if (!disruptionCheck) {
+    return { value: "Low", sub: "No disruption data", color: "green" };
+  }
+
+  if (disruptionCheck.affected && disruptionCheck.eligible_for_payout) {
+    return { value: "High", sub: "Payout trigger active", color: "red" };
+  }
+
+  if (disruptionCheck.affected) {
+    return { value: "Medium", sub: "Zone affected", color: "orange" };
+  }
+
+  return { value: "Low", sub: "No active disruption", color: "green" };
+};
 
 /* ─── Sub-components ────────────────────────────────────────── */
 
@@ -37,7 +98,13 @@ function StatCard({ label, value, sub, color, icon }) {
   );
 }
 
-function DisruptionBanner({ onDismiss }) {
+function DisruptionBanner({ disruptionCheck, onDismiss }) {
+  if (!disruptionCheck || !disruptionCheck.affected || !disruptionCheck.disruptions?.length) {
+    return null;
+  }
+
+  const disruption = disruptionCheck.disruptions[0];
+
   return (
     <div className="disruption-banner">
       <svg
@@ -53,7 +120,10 @@ function DisruptionBanner({ onDismiss }) {
           strokeLinejoin="round"
         />
         <line
-          x1="10" y1="8.5" x2="10" y2="11.5"
+          x1="10"
+          y1="8.5"
+          x2="10"
+          y2="11.5"
           stroke="currentColor"
           strokeWidth="1.5"
           strokeLinecap="round"
@@ -63,12 +133,13 @@ function DisruptionBanner({ onDismiss }) {
 
       <div className="disruption-content">
         <div className="disruption-title">
-          Disruption alert — heavy rain detected
+          Disruption alert — {String(disruption.type || "unknown").replaceAll("_", " ")}
         </div>
         <div className="disruption-body">
-          High rainfall in Velachery &amp; Tambaram zones may reduce delivery
-          volume today. Your coverage multiplier is active.
-          <span className="disruption-tag">+1.3× premium</span>
+          {disruption.description || "A disruption is active in your zone."}
+          <span className="disruption-tag">
+            {disruptionCheck.eligible_for_payout ? "Payout eligible" : "Zone affected"}
+          </span>
         </div>
       </div>
 
@@ -83,12 +154,12 @@ function DisruptionBanner({ onDismiss }) {
   );
 }
 
-function WeeklyChart({ premiums = [], payouts = [] }) {
+function WeeklyChart({ premiums = [], payouts = [], city = "Your Zone" }) {
   const canvasRef = useRef(null);
-  const chartRef  = useRef(null);
+  const chartRef = useRef(null);
 
   const totalPremium = premiums.reduce((a, b) => a + Number(b), 0);
-  const totalPayout  = payouts.reduce((a, b) => a + Number(b), 0);
+  const totalPayout = payouts.reduce((a, b) => a + Number(b), 0);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -98,44 +169,50 @@ function WeeklyChart({ premiums = [], payouts = [] }) {
     }
 
     chartRef.current = new Chart(canvasRef.current, {
-      type: "bar",
+      type: "line",
       data: {
         labels: WEEKLY_LABELS,
         datasets: [
           {
-            label:           "Premium",
-            data:            premiums,
-            backgroundColor: "rgba(124, 110, 249, 0.8)",
-            borderRadius:    5,
-            borderSkipped:   false,
-            barPercentage:   0.5,
-            categoryPercentage: 0.6,
+            label: "Premium",
+            data: premiums,
+            borderColor: "rgba(124, 110, 249, 1)",
+            backgroundColor: "rgba(124, 110, 249, 0.15)",
+            fill: true,
+            tension: 0.35,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            pointBackgroundColor: "rgba(124, 110, 249, 1)",
+            pointBorderWidth: 0,
           },
           {
-            label:           "Payout",
-            data:            payouts,
-            backgroundColor: "rgba(46, 196, 166, 0.8)",
-            borderRadius:    5,
-            borderSkipped:   false,
-            barPercentage:   0.5,
-            categoryPercentage: 0.6,
+            label: "Payout",
+            data: payouts,
+            borderColor: "rgba(46, 196, 166, 1)",
+            backgroundColor: "rgba(46, 196, 166, 0.12)",
+            fill: true,
+            tension: 0.35,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            pointBackgroundColor: "rgba(46, 196, 166, 1)",
+            pointBorderWidth: 0,
           },
         ],
       },
       options: {
-        responsive:          true,
+        responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         plugins: {
           legend: { display: false },
           tooltip: {
             backgroundColor: "#1a1a2b",
-            titleColor:      "#f0f0f8",
-            bodyColor:       "#8888a8",
-            borderColor:     "rgba(255,255,255,0.08)",
-            borderWidth:     1,
-            padding:         10,
-            cornerRadius:    8,
+            titleColor: "#f0f0f8",
+            bodyColor: "#8888a8",
+            borderColor: "rgba(255,255,255,0.08)",
+            borderWidth: 1,
+            padding: 10,
+            cornerRadius: 8,
             callbacks: {
               label: (ctx) =>
                 `  ${ctx.dataset.label}: ₹${ctx.parsed.y.toLocaleString("en-IN")}`,
@@ -144,20 +221,20 @@ function WeeklyChart({ premiums = [], payouts = [] }) {
         },
         scales: {
           x: {
-            grid:   { display: false },
+            grid: { display: false },
             border: { display: false },
-            ticks:  {
-              color:      "#55556a",
-              font:       { size: 11, family: "'DM Sans', sans-serif" },
+            ticks: {
+              color: "#55556a",
+              font: { size: 11, family: "'DM Sans', sans-serif" },
             },
           },
           y: {
-            grid:   { color: "rgba(255,255,255,0.05)" },
+            grid: { color: "rgba(255,255,255,0.05)" },
             border: { display: false },
-            ticks:  {
-              color:      "#55556a",
-              font:       { size: 11, family: "'DM Sans', sans-serif" },
-              callback:   (v) => "₹" + v,
+            ticks: {
+              color: "#55556a",
+              font: { size: 11, family: "'DM Sans', sans-serif" },
+              callback: (v) => "₹" + v,
             },
           },
         },
@@ -169,7 +246,6 @@ function WeeklyChart({ premiums = [], payouts = [] }) {
     };
   }, []);
 
-  // Update data seamlessly over existing graph
   useEffect(() => {
     if (chartRef.current) {
       chartRef.current.data.datasets[0].data = premiums;
@@ -183,7 +259,7 @@ function WeeklyChart({ premiums = [], payouts = [] }) {
       <div className="chart-header">
         <div>
           <div className="chart-title">Premium paid vs Payouts received</div>
-          <div className="chart-subtitle">Last 7 days · Chennai</div>
+          <div className="chart-subtitle">Last 7 days · {city}</div>
         </div>
         <div className="legend">
           <div className="legend-item">
@@ -219,32 +295,31 @@ function WeeklyChart({ premiums = [], payouts = [] }) {
   );
 }
 
-/* ─── Camera Modal ─────────────────────────────────────────── */
 function ReportModal({ onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const [stream, setStream] = useState(null);
   const [photoData, setPhotoData] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    let s;
+    let stream;
     const startCam = async () => {
       try {
-        s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+        });
         if (videoRef.current) {
-          videoRef.current.srcObject = s;
+          videoRef.current.srcObject = stream;
         }
-        setStream(s);
       } catch (err) {
         console.error("Camera access denied", err);
       }
     };
     startCam();
-    
+
     return () => {
-      if (s) s.getTracks().forEach(t => t.stop());
+      if (stream) stream.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
@@ -254,9 +329,9 @@ function ReportModal({ onClose }) {
     const video = videoRef.current;
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     ctx.drawImage(video, 0, 0);
-    const dataUri = canvas.toDataURL('image/jpeg');
+    const dataUri = canvas.toDataURL("image/jpeg");
     setPhotoData(dataUri);
   };
 
@@ -266,11 +341,10 @@ function ReportModal({ onClose }) {
 
   const submitToAI = async () => {
     setAnalyzing(true);
-    // Mocking python AI execution wait time
-    await new Promise(r => setTimeout(r, 2500));
+    await new Promise((r) => setTimeout(r, 2500));
     setAnalyzing(false);
     setSuccess(true);
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 2000));
     onClose();
   };
 
@@ -278,7 +352,7 @@ function ReportModal({ onClose }) {
     <div className="cam-modal-overlay">
       <div className="cam-modal-content">
         <div className="cam-modal-head">
-          <h2 style={{ fontSize: 20, color: '#fff' }}>AI Validation Camera</h2>
+          <h2 style={{ fontSize: 20, color: "#fff" }}>AI Validation Camera</h2>
           <button className="cam-close" onClick={onClose}>✕</button>
         </div>
 
@@ -301,28 +375,40 @@ function ReportModal({ onClose }) {
                   <img src={photoData} className="cam-preview" alt="Validation Snapshot" />
                   <div className="cam-overlay-ui">
                     {analyzing ? (
-                        <div className="cam-analyzing">
-                          <span className="spinner" />
-                          <div>Running Computer Vision Model...</div>
-                        </div>
+                      <div className="cam-analyzing">
+                        <span className="spinner" />
+                        <div>Running Computer Vision Model...</div>
+                      </div>
                     ) : (
                       <div className="cam-actions">
                         <button className="cam-retake-btn" onClick={retake}>↺ Retake</button>
-                        <button className="cam-submit-btn" onClick={submitToAI}>Validate with AI →</button>
+                        <button className="cam-submit-btn" onClick={submitToAI}>
+                          Validate with AI →
+                        </button>
                       </div>
                     )}
                   </div>
                 </>
               )}
             </div>
-            <canvas ref={canvasRef} style={{ display: 'none' }} />
+            <canvas ref={canvasRef} style={{ display: "none" }} />
           </div>
         ) : (
           <div className="cam-success">
             <div className="done-icon" style={{ marginBottom: 16 }}>✓</div>
-            <h3 style={{ fontSize: 24, marginBottom: 8, color: '#10b981' }}>Blockade Verified!</h3>
-            <p style={{ color: 'var(--muted)', textAlign: 'center', lineHeight: 1.5, maxWidth: 320 }}>
-              AI has verified the roadblock. Maps API indicates no alternate routes. Disruption payout has been authorized.
+            <h3 style={{ fontSize: 24, marginBottom: 8, color: "#10b981" }}>
+              Blockade Verified!
+            </h3>
+            <p
+              style={{
+                color: "var(--muted)",
+                textAlign: "center",
+                lineHeight: 1.5,
+                maxWidth: 320,
+              }}
+            >
+              AI has verified the roadblock. Maps API indicates no alternate routes.
+              Disruption payout has been authorized.
             </p>
           </div>
         )}
@@ -331,146 +417,238 @@ function ReportModal({ onClose }) {
   );
 }
 
-/* ─── Payout Celebration Modal ───────────────────────────────── */
-function PayoutCelebration({ amount, onClose }) {
-  return (
-    <div className="payout-overlay" onClick={onClose}>
-      <div className="payout-card" onClick={(e) => e.stopPropagation()}>
-        <div className="payout-icon-wrap">
-          <div className="payout-icon-glow"></div>
-          <span className="payout-icon">⚡</span>
-        </div>
-        <h2 className="payout-title">Parametric Trigger Hit!</h2>
-        <p className="payout-body">
-          Heavy Rainfall threshold met in your zone. <b className="payout-amount-text">₹{amount}</b> has automatically been dispatched to your UPI.
-        </p>
-        <button className="payout-close-btn" onClick={onClose}>Awesome!</button>
-      </div>
-      
-      <div className="confetti-container">
-        {[...Array(60)].map((_, i) => {
-          const angle = Math.random() * Math.PI * 2;
-          const velocity = 100 + Math.random() * 400; 
-          const tx = Math.cos(angle) * velocity;
-          const ty = Math.sin(angle) * velocity;
-          return (
-            <div 
-              key={i} 
-              className={`confetti piece-${i % 5}`} 
-              style={{ 
-                '--tx': `${tx}px`, 
-                '--ty': `${ty}px`, 
-                left: '50%', top: '50%',
-                animationDelay: `${Math.random() * 0.1}s` 
-              }} 
-            />
-          )
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ─── Main Dashboard ────────────────────────────────────────── */
 const Dashboard = () => {
   const [showDisruption, setShowDisruption] = useState(true);
   const [showCamera, setShowCamera] = useState(false);
-  const [showPayoutCel, setShowPayoutCel] = useState(false);
-  const [userData, setUserData] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
+  const [payouts, setPayouts] = useState([]);
+  const [disruptionCheck, setDisruptionCheck] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const userPhone = localStorage.getItem("userPhone");
 
   useEffect(() => {
-    const fetchUser = async () => {
-      const phone = localStorage.getItem('userPhone');
-      if (!phone) return;
-      const { data } = await supabase.from('users').select('*').eq('phone', phone).single();
-      if (data) setUserData(data);
-    };
-    fetchUser();
+    fetchDashboardData();
   }, []);
 
-  const today = new Date().toLocaleDateString("en-IN", {
-    day:   "numeric",
-    month: "short",
-    year:  "numeric",
-  });
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
 
-  const triggerAutoPayout = async () => {
-    if (!userData) return;
-    
-    // Calculate current day index (Monday=0, Sunday=6)
-    let dayIndex = new Date().getDay() - 1;
-    if (dayIndex < 0) dayIndex = 6; 
+      if (!userPhone) {
+        setLoading(false);
+        return;
+      }
 
-    const newPayouts = [...(userData.weekly_payouts || [0,0,0,0,0,0,0])];
-    newPayouts[dayIndex] = Number(newPayouts[dayIndex]) + 500;
-    const newTotal = Number(userData.total_received || 0) + 500;
+      const profileRes = await fetch(
+        `${API_BASE}/user/profile/${encodeURIComponent(userPhone)}`
+      );
+      const profileJson = await profileRes.json();
 
-    // Fast local state update to force Chart.js animation immediately
-    setUserData({ ...userData, weekly_payouts: newPayouts, total_received: newTotal });
-    setShowPayoutCel(true);
+      if (!profileRes.ok || !profileJson.success) {
+        throw new Error(profileJson.message || "Failed to fetch profile");
+      }
 
-    // Sync to Supabase in background
-    await supabase.from('users').update({
-      weekly_payouts: newPayouts,
-      total_received: newTotal
-    }).eq('phone', userData.phone);
+      const profileData = profileJson.data;
+      const user = profileData?.user || profileData;
+      const rider = profileData?.rider || null;
+
+      setUserProfile({ user, rider });
+
+      const payoutsRes = await fetch(
+        `${API_BASE}/payouts/${encodeURIComponent(userPhone)}`
+      );
+      const payoutsJson = await payoutsRes.json();
+
+      if (payoutsRes.ok && payoutsJson.success) {
+        setPayouts(payoutsJson.data || []);
+      }
+
+      if (user?.rider_id) {
+        const disruptionRes = await fetch(
+          `${DISRUPTION_API_BASE}/mock-disruptions/check/${encodeURIComponent(
+            user.rider_id
+          )}`
+        );
+        const disruptionJson = await disruptionRes.json();
+
+        if (disruptionRes.ok && disruptionJson.success) {
+          setDisruptionCheck(disruptionJson);
+        }
+      }
+    } catch (error) {
+      console.error("Dashboard fetch error:", error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  if (!userData) {
-    return <div className="dashboard" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>;
+  const user = userProfile?.user || null;
+  const rider = userProfile?.rider || null;
+
+  const totalReceived = useMemo(() => {
+    return payouts
+      .filter((p) => p.status === "paid")
+      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  }, [payouts]);
+
+  const weeklyPremiums = useMemo(() => {
+    return buildWeeklyPremiumSeries(
+      user?.this_week_premium,
+      user?.coverage_status
+    );
+  }, [user]);
+
+  const weeklyPayouts = useMemo(() => {
+    return buildWeeklyPayoutSeries(payouts);
+  }, [payouts]);
+
+  const riskInfo = useMemo(() => getRiskInfo(disruptionCheck), [disruptionCheck]);
+
+  const today = new Date().toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+  if (loading) {
+    return (
+      <div
+        className="dashboard"
+        style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+      >
+        Loading...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div
+        className="dashboard"
+        style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+      >
+        User not found.
+      </div>
+    );
   }
 
   const dynamicStats = [
-    { id: "coverage", label: "Coverage", value: userData.coverage_status || "Active", sub: "Renews Monday", color: "green", icon: "🛡️" },
-    { id: "this-week", label: "This Week", value: `₹${userData.this_week_premium}`, sub: "Premium paid", color: "purple", icon: "📅" },
-    { id: "total-received", label: "Total Received", value: `₹${Number(userData.total_received || 0).toLocaleString('en-IN')}`, sub: "Lifetime payouts", color: "teal", icon: "💳" },
-    { id: "risk-status", label: "Risk Status", value: "Low", sub: "No flags this week", color: "green", icon: "📊" },
+    {
+      id: "coverage",
+      label: "Coverage",
+      value: user.coverage_status || "Inactive",
+      sub: user.selected_plan ? `${user.selected_plan} active` : "No active plan",
+      color: user.coverage_status === "Active" ? "green" : "orange",
+      icon: "🛡️",
+    },
+    {
+      id: "this-week",
+      label: "This Week",
+      value: formatCurrency(user.this_week_premium || 0),
+      sub: "Weekly premium",
+      color: "purple",
+      icon: "📅",
+    },
+    {
+      id: "total-received",
+      label: "Total Received",
+      value: formatCurrency(totalReceived),
+      sub: `${payouts.filter((p) => p.status === "paid").length} payouts`,
+      color: "teal",
+      icon: "💳",
+    },
+    {
+      id: "risk-status",
+      label: "Risk Status",
+      value: riskInfo.value,
+      sub: riskInfo.sub,
+      color: riskInfo.color,
+      icon: "📊",
+    },
   ];
 
   return (
     <div className="dashboard">
-      {/* Top bar */}
       <div className="topbar">
-        <div className="topbar-left" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div className="topbar-left" style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <div>
-            <span className="topbar-greeting">Welcome back, {userData.name ? userData.name.split(' ')[0] : 'Rider'}</span>
+            <span className="topbar-greeting">
+              Welcome back, {user.name ? user.name.split(" ")[0] : "Rider"}
+            </span>
             <h1 className="topbar-title">Rider Dashboard</h1>
           </div>
+
           <button className="report-btn" onClick={() => setShowCamera(true)}>
             🚨 Report Blockade
           </button>
-          <button className="report-btn" style={{ background: 'rgba(16, 185, 129, 0.15)', borderColor: 'rgba(16, 185, 129, 0.4)', color: '#10b981' }} onClick={triggerAutoPayout}>
-            🌧️ Simulate Auto-Payout
-          </button>
         </div>
+
         <div className="topbar-right">
           <div className="coverage-badge">
             <span className="pulse-dot" />
-            Coverage active
+            {user.coverage_status === "Active" ? "Coverage active" : "Coverage inactive"}
           </div>
           <span className="date-chip">{today}</span>
         </div>
       </div>
 
-      {/* Stat cards */}
       <div className="stat-cards">
         {dynamicStats.map((s) => (
           <StatCard key={s.id} {...s} />
         ))}
       </div>
 
-      <WeeklyChart premiums={userData.weekly_premiums || [0,0,0,0,0,0,0]} payouts={userData.weekly_payouts || [0,0,0,0,0,0,0]} />
+      <WeeklyChart
+        premiums={weeklyPremiums}
+        payouts={weeklyPayouts}
+        city={rider?.city || "Your Zone"}
+      />
 
-      {/* Disruption banner */}
-      {showDisruption && (
-        <DisruptionBanner onDismiss={() => setShowDisruption(false)} />
+      {showDisruption && disruptionCheck?.affected && (
+        <DisruptionBanner
+          disruptionCheck={disruptionCheck}
+          onDismiss={() => setShowDisruption(false)}
+        />
       )}
 
-      {/* Camera modal */}
+      <div className="chart-section">
+        <div className="chart-header">
+          <div>
+            <div className="chart-title">Latest Payout</div>
+            <div className="chart-subtitle">Most recent insurance payout</div>
+          </div>
+        </div>
+
+        {payouts.length === 0 ? (
+          <div style={{ color: "#8888a8", fontSize: 14 }}>
+            No payouts yet.
+          </div>
+        ) : (
+          <div className="chart-summary">
+            <div className="chart-sum-item">
+              <span className="chart-sum-label">Amount</span>
+              <span className="chart-sum-value teal">
+                {formatCurrency(payouts[0].amount)}
+              </span>
+            </div>
+            <div className="chart-sum-item">
+              <span className="chart-sum-label">Status</span>
+              <span className="chart-sum-value purple">
+                {payouts[0].status === "paid" ? "Payout Sent" : payouts[0].status}
+              </span>
+            </div>
+            <div className="chart-sum-item">
+              <span className="chart-sum-label">Processed</span>
+              <span className="chart-sum-value teal">
+                {formatDate(payouts[0].paid_at || payouts[0].created_at)}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {showCamera && <ReportModal onClose={() => setShowCamera(false)} />}
-      
-      {/* Celebration Payout Modal */}
-      {showPayoutCel && <PayoutCelebration amount={500} onClose={() => setShowPayoutCel(false)} />}
     </div>
   );
 };

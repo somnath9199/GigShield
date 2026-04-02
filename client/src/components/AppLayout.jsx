@@ -30,10 +30,11 @@ export default function AppLayout() {
   }, [location.pathname, navigate]);
   const links = [
     { to: ".", label: "Dashboard", end: true, icon: "📊" },
-    { to: "live-location", label: "Live Location", icon: "📍" },
     { to: "risk", label: "Risk Score", icon: "🧠" },
     { to: "plans", label: "Plans", icon: "🛡️" },
     { to: "history", label: "History", icon: "🕒" },
+    { to: "bankinfo", label: "Bank Information", icon: "🏦" },
+    { to: "profile", label: "Profile", icon: "👤" }
   ];
 
   const handleLogout = () => {

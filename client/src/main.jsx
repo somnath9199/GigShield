@@ -10,6 +10,8 @@ import RiskScore from './pages/RiskScore.jsx'
 import Plans from './pages/Plans.jsx'
 import History from './pages/History.jsx'
 import AppLayout from './components/AppLayout.jsx'
+import Bankinfo from './pages/Bankinfo.jsx'
+import Profile from './pages/Profile.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -23,6 +25,8 @@ createRoot(document.getElementById('root')).render(
         <Route path='risk' element={<RiskScore/>}/>
         <Route path='plans' element={<Plans/>}/>
         <Route path='history' element={<History/>}/>
+        <Route path='bankinfo' element={<Bankinfo/>}/>
+        <Route path='profile' element={<Profile/>}/>
       </Route>
     </Routes>
     </BrowserRouter>
