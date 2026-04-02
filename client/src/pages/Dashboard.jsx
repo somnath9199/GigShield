@@ -169,6 +169,15 @@ function WeeklyChart({ premiums = [], payouts = [] }) {
     };
   }, []);
 
+  // Update data seamlessly over existing graph
+  useEffect(() => {
+    if (chartRef.current) {
+      chartRef.current.data.datasets[0].data = premiums;
+      chartRef.current.data.datasets[1].data = payouts;
+      chartRef.current.update();
+    }
+  }, [premiums, payouts]);
+
   return (
     <div className="chart-section">
       <div className="chart-header">
@@ -210,9 +219,163 @@ function WeeklyChart({ premiums = [], payouts = [] }) {
   );
 }
 
+/* ─── Camera Modal ─────────────────────────────────────────── */
+function ReportModal({ onClose }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [stream, setStream] = useState(null);
+  const [photoData, setPhotoData] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    let s;
+    const startCam = async () => {
+      try {
+        s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (videoRef.current) {
+          videoRef.current.srcObject = s;
+        }
+        setStream(s);
+      } catch (err) {
+        console.error("Camera access denied", err);
+      }
+    };
+    startCam();
+    
+    return () => {
+      if (s) s.getTracks().forEach(t => t.stop());
+    };
+  }, []);
+
+  const takePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+    const dataUri = canvas.toDataURL('image/jpeg');
+    setPhotoData(dataUri);
+  };
+
+  const retake = () => {
+    setPhotoData(null);
+  };
+
+  const submitToAI = async () => {
+    setAnalyzing(true);
+    // Mocking python AI execution wait time
+    await new Promise(r => setTimeout(r, 2500));
+    setAnalyzing(false);
+    setSuccess(true);
+    await new Promise(r => setTimeout(r, 2000));
+    onClose();
+  };
+
+  return (
+    <div className="cam-modal-overlay">
+      <div className="cam-modal-content">
+        <div className="cam-modal-head">
+          <h2 style={{ fontSize: 20, color: '#fff' }}>AI Validation Camera</h2>
+          <button className="cam-close" onClick={onClose}>✕</button>
+        </div>
+
+        {!success ? (
+          <div className="cam-body">
+            <div className="cam-viewfinder">
+              {!photoData ? (
+                <>
+                  <video ref={videoRef} autoPlay playsInline className="cam-video" />
+                  <div className="cam-overlay-ui">
+                    <div className="cam-crosshair" />
+                    <button className="cam-capture-btn" onClick={takePhoto}>
+                      <div className="cam-capture-inner" />
+                    </button>
+                    <div className="cam-hint">Point at blockade & capture</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <img src={photoData} className="cam-preview" alt="Validation Snapshot" />
+                  <div className="cam-overlay-ui">
+                    {analyzing ? (
+                        <div className="cam-analyzing">
+                          <span className="spinner" />
+                          <div>Running Computer Vision Model...</div>
+                        </div>
+                    ) : (
+                      <div className="cam-actions">
+                        <button className="cam-retake-btn" onClick={retake}>↺ Retake</button>
+                        <button className="cam-submit-btn" onClick={submitToAI}>Validate with AI →</button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
+          </div>
+        ) : (
+          <div className="cam-success">
+            <div className="done-icon" style={{ marginBottom: 16 }}>✓</div>
+            <h3 style={{ fontSize: 24, marginBottom: 8, color: '#10b981' }}>Blockade Verified!</h3>
+            <p style={{ color: 'var(--muted)', textAlign: 'center', lineHeight: 1.5, maxWidth: 320 }}>
+              AI has verified the roadblock. Maps API indicates no alternate routes. Disruption payout has been authorized.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Payout Celebration Modal ───────────────────────────────── */
+function PayoutCelebration({ amount, onClose }) {
+  return (
+    <div className="payout-overlay" onClick={onClose}>
+      <div className="payout-card" onClick={(e) => e.stopPropagation()}>
+        <div className="payout-icon-wrap">
+          <div className="payout-icon-glow"></div>
+          <span className="payout-icon">⚡</span>
+        </div>
+        <h2 className="payout-title">Parametric Trigger Hit!</h2>
+        <p className="payout-body">
+          Heavy Rainfall threshold met in your zone. <b className="payout-amount-text">₹{amount}</b> has automatically been dispatched to your UPI.
+        </p>
+        <button className="payout-close-btn" onClick={onClose}>Awesome!</button>
+      </div>
+      
+      <div className="confetti-container">
+        {[...Array(60)].map((_, i) => {
+          const angle = Math.random() * Math.PI * 2;
+          const velocity = 100 + Math.random() * 400; 
+          const tx = Math.cos(angle) * velocity;
+          const ty = Math.sin(angle) * velocity;
+          return (
+            <div 
+              key={i} 
+              className={`confetti piece-${i % 5}`} 
+              style={{ 
+                '--tx': `${tx}px`, 
+                '--ty': `${ty}px`, 
+                left: '50%', top: '50%',
+                animationDelay: `${Math.random() * 0.1}s` 
+              }} 
+            />
+          )
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main Dashboard ────────────────────────────────────────── */
 const Dashboard = () => {
   const [showDisruption, setShowDisruption] = useState(true);
+  const [showCamera, setShowCamera] = useState(false);
+  const [showPayoutCel, setShowPayoutCel] = useState(false);
   const [userData, setUserData] = useState(null);
 
   useEffect(() => {
@@ -231,6 +394,28 @@ const Dashboard = () => {
     year:  "numeric",
   });
 
+  const triggerAutoPayout = async () => {
+    if (!userData) return;
+    
+    // Calculate current day index (Monday=0, Sunday=6)
+    let dayIndex = new Date().getDay() - 1;
+    if (dayIndex < 0) dayIndex = 6; 
+
+    const newPayouts = [...(userData.weekly_payouts || [0,0,0,0,0,0,0])];
+    newPayouts[dayIndex] = Number(newPayouts[dayIndex]) + 500;
+    const newTotal = Number(userData.total_received || 0) + 500;
+
+    // Fast local state update to force Chart.js animation immediately
+    setUserData({ ...userData, weekly_payouts: newPayouts, total_received: newTotal });
+    setShowPayoutCel(true);
+
+    // Sync to Supabase in background
+    await supabase.from('users').update({
+      weekly_payouts: newPayouts,
+      total_received: newTotal
+    }).eq('phone', userData.phone);
+  };
+
   if (!userData) {
     return <div className="dashboard" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>;
   }
@@ -246,9 +431,17 @@ const Dashboard = () => {
     <div className="dashboard">
       {/* Top bar */}
       <div className="topbar">
-        <div className="topbar-left">
-          <span className="topbar-greeting">Welcome back, {userData.name ? userData.name.split(' ')[0] : 'Rider'}</span>
-          <h1 className="topbar-title">Rider Dashboard</h1>
+        <div className="topbar-left" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div>
+            <span className="topbar-greeting">Welcome back, {userData.name ? userData.name.split(' ')[0] : 'Rider'}</span>
+            <h1 className="topbar-title">Rider Dashboard</h1>
+          </div>
+          <button className="report-btn" onClick={() => setShowCamera(true)}>
+            🚨 Report Blockade
+          </button>
+          <button className="report-btn" style={{ background: 'rgba(16, 185, 129, 0.15)', borderColor: 'rgba(16, 185, 129, 0.4)', color: '#10b981' }} onClick={triggerAutoPayout}>
+            🌧️ Simulate Auto-Payout
+          </button>
         </div>
         <div className="topbar-right">
           <div className="coverage-badge">
@@ -272,6 +465,12 @@ const Dashboard = () => {
       {showDisruption && (
         <DisruptionBanner onDismiss={() => setShowDisruption(false)} />
       )}
+
+      {/* Camera modal */}
+      {showCamera && <ReportModal onClose={() => setShowCamera(false)} />}
+      
+      {/* Celebration Payout Modal */}
+      {showPayoutCel && <PayoutCelebration amount={500} onClose={() => setShowPayoutCel(false)} />}
     </div>
   );
 };

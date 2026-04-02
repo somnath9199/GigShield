@@ -21,10 +21,12 @@ export default function Auth() {
   const [screen, setScreen] = useState("login");
   const [pendingPhone, setPendingPhone] = useState("");
   const [pendingData, setPendingData]   = useState(null); // signup form payload
+  const [isNewUser, setIsNewUser] = useState(false);
 
   const goOtp = (phone, fromSignup = false, payload = null) => {
     setPendingPhone(phone);
     setPendingData(payload);
+    setIsNewUser(fromSignup);
     setScreen(fromSignup ? "otp-signup" : "otp-login");
   };
 
@@ -46,7 +48,7 @@ export default function Auth() {
           {screen === "signup"     && <SignupScreen      onOtp={(p, pl) => goOtp(p, true, pl)} onLogin={() => setScreen("login")} />}
           {screen === "otp-login"  && <OtpScreen phone={pendingPhone} payload={null}      onSuccess={() => setScreen("done")} onBack={() => setScreen("login")} />}
           {screen === "otp-signup" && <OtpScreen phone={pendingPhone} payload={pendingData} onSuccess={() => setScreen("done")} onBack={() => setScreen("signup")} />}
-          {screen === "done"       && <DoneScreen />}
+          {screen === "done"       && <DoneScreen isNewUser={isNewUser} />}
 
           {(screen === "login" || screen === "signup") && (
             <p className="switch-row">
@@ -134,15 +136,47 @@ function SignupScreen({ onOtp, onLogin }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [f, setF] = useState({
-    rider_id: "", Name: "", email: "", password: "", confirm: "",
-    phone_number: "", platform: "",
+    Name: "", email: "", password: "", confirm: "",
+    phone_number: "", platform: "", country: "India", city: ""
   });
 
   const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
   const setPlatform = (v) => setF((p) => ({ ...p, platform: v }));
 
+  const detectLocation = () => {
+    if (!navigator.geolocation) {
+      setErr("Geolocation is not supported by your browser");
+      return;
+    }
+    setLoading(true);
+    setErr("Locating...");
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+        const { latitude, longitude } = pos.coords;
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+        const data = await res.json();
+        
+        const cityObj = data.address.city || data.address.town || data.address.village || data.address.county || "";
+        const countryObj = data.address.country || "India";
+        
+        setF(prev => ({ ...prev, city: cityObj, country: countryObj }));
+        setErr("");
+      } catch (e) {
+        setErr("Failed to pull location data automatically.");
+      }
+      setLoading(false);
+    }, (e) => {
+      setErr("Location permission was denied.");
+      setLoading(false);
+    });
+  };
+
   const nextStep = () => {
-    if (!f.rider_id || !f.Name || !f.email || !f.password) {
+    const rawPhone = f.phone_number.replace(/\D/g,"");
+    if (!rawPhone || rawPhone.length < 10) {
+      setErr("Enter a valid 10-digit phone number."); return;
+    }
+    if (!f.Name || !f.email || !f.password) {
       setErr("Please fill all fields."); return;
     }
     if (f.password !== f.confirm) {
@@ -152,18 +186,26 @@ function SignupScreen({ onOtp, onLogin }) {
   };
 
   const submit = async () => {
-    const rawPhone = f.phone_number.replace(/\D/g,"");
-    if (!rawPhone || rawPhone.length < 10) {
-      setErr("Enter a valid phone number."); return;
+    if (!f.country || !f.city) {
+      setErr("Please provide your operating zone location."); return;
     }
+    if (!f.platform) {
+      setErr("Please select your delivery platform."); return;
+    }
+    
     setErr(""); setLoading(true);
+    
+    const rawPhone = f.phone_number.replace(/\D/g,"");
+    const generatedRiderId = `GS-${rawPhone}`;
 
     const payload = {
-      rider_id: f.rider_id,
+      rider_id: generatedRiderId,
       name: f.Name,
       email: f.email,
       password: f.password,
       phone: rawPhone,
+      country: f.country,
+      city: f.city,
       isactive: true,
       phone_number_verified: false
     };
@@ -176,7 +218,13 @@ function SignupScreen({ onOtp, onLogin }) {
     setLoading(false);
     
     if (error) {
-      setErr(error.message || "Signup failed. Rider ID might already exist.");
+      if (error.message.includes("users_email_key")) {
+        setErr("This email address is already registered. Please sign in.");
+      } else if (error.message.includes("users_phone_key") || error.message.includes("users_pkey")) {
+        setErr("This phone number is already registered. Please sign in.");
+      } else {
+        setErr(error.message || "Signup failed. Account may already exist.");
+      }
       return;
     }
 
@@ -198,11 +246,23 @@ function SignupScreen({ onOtp, onLogin }) {
         <>
           <div className="form-head">
             <h2 className="form-title">Create account</h2>
-            <p className="form-sub">Verify your Rider ID to get started</p>
+            <p className="form-sub">Join exactly 84,000 riders in getting protected</p>
           </div>
 
           <div className="field-grid">
-            <Field label="Rider ID" placeholder="ZOM-XXXXXXX" value={f.rider_id} onChange={set("rider_id")} />
+            <label className="field-label" style={{ marginBottom: 6 }}>Mobile number</label>
+            <div className="phone-wrap" style={{ marginBottom: 14 }}>
+              <span className="phone-pfx">+91</span>
+              <input
+                className="phone-inp"
+                type="tel"
+                placeholder="98765 43210"
+                maxLength={10}
+                value={f.phone_number}
+                onChange={(e) => setF((p) => ({ ...p, phone_number: e.target.value.replace(/\D/g,"") }))}
+              />
+            </div>
+            
             <Field label="Full name" placeholder="Ravi Kumar" value={f.Name} onChange={set("Name")} />
             <Field label="Email address" placeholder="ravi@email.com" type="email" value={f.email} onChange={set("email")} />
             <Field label="Password" type="password" placeholder="Min 8 characters" value={f.password} onChange={set("password")} />
@@ -218,21 +278,21 @@ function SignupScreen({ onOtp, onLogin }) {
         <>
           <div className="form-head">
             <button className="back-btn" onClick={() => { setStep(1); setErr(""); }}>← Back</button>
-            <h2 className="form-title">Your profile</h2>
-            <p className="form-sub">Helps us calculate your risk score</p>
+            <h2 className="form-title">Your operating zone</h2>
+            <p className="form-sub">Helps us calculate your localized risk score</p>
           </div>
 
-          <label className="field-label">Mobile number</label>
-          <div className="phone-wrap">
-            <span className="phone-pfx">+91</span>
-            <input
-              className="phone-inp"
-              type="tel"
-              placeholder="98765 43210"
-              maxLength={10}
-              value={f.phone_number}
-              onChange={(e) => setF((p) => ({ ...p, phone_number: e.target.value.replace(/\D/g,"") }))}
-            />
+          <div className="field-grid" style={{ position: 'relative' }}>
+            <Field label="Country" placeholder="India" value={f.country} onChange={set("country")} />
+            
+            <Field label="City / Zone" placeholder="Bengaluru" value={f.city} onChange={set("city")} />
+            <button 
+              onClick={detectLocation}
+              disabled={loading}
+              style={{ position: 'absolute', right: 0, top: 96, background: 'none', border: 'none', color: '#a78bfa', cursor: loading ? 'wait' : 'pointer', fontSize: 13, fontWeight: 700, padding: 12 }}
+            >
+              📍 Auto-Detect
+            </button>
           </div>
 
           <label className="field-label" style={{ marginTop: 12 }}>Delivery platform</label>
@@ -383,7 +443,7 @@ function OtpScreen({ phone, payload, onSuccess, onBack }) {
 /* ════════════════════════════════════════════════════════
    DONE SCREEN
 ═══════════════════════════════════════════════════════════ */
-function DoneScreen() {
+function DoneScreen({ isNewUser }) {
   const navigate = useNavigate();
   return (
     <div className="anim-in done-screen">
@@ -393,19 +453,33 @@ function DoneScreen() {
         Your phone number is confirmed. GigShield is now monitoring
         disruptions in your zone 24 / 7.
       </p>
-      <div className="done-cards">
-        {[
-          { label: "Coverage starts", value: "This Monday" },
-          { label: "Claim method",    value: "Fully automatic" },
-          { label: "Payout channel",  value: "UPI instant" },
-        ].map(({ label, value }) => (
-          <div key={label} className="done-row">
-            <span className="done-key">{label}</span>
-            <span className="done-val">{value}</span>
+
+      {!isNewUser ? (
+        <>
+          <div className="done-cards">
+            {[
+              { label: "Coverage starts", value: "This Monday" },
+              { label: "Claim method",    value: "Fully automatic" },
+              { label: "Payout channel",  value: "UPI instant" },
+            ].map(({ label, value }) => (
+              <div key={label} className="done-row">
+                <span className="done-key">{label}</span>
+                <span className="done-val">{value}</span>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      <button className="primary-btn" onClick={() => navigate('/dashboard')}>Go to Dashboard →</button>
+          <button className="primary-btn" onClick={() => navigate('/dashboard')}>Go to Dashboard →</button>
+        </>
+      ) : (
+        <>
+          <div className="done-cards" style={{ padding: '24px 20px', textAlign: 'center', background: 'rgba(124, 58, 237, 0.05)', borderColor: 'rgba(124, 58, 237, 0.2)' }}>
+            <span className="done-key" style={{ color: '#fff', fontSize: '14.5px', lineHeight: 1.5, display: 'block' }}>
+              Final Step! Select your Parametric Insurance Plan to activate your Dashboard.
+            </span>
+          </div>
+          <button className="primary-btn" onClick={() => navigate('/dashboard/plans')}>Choose Plan →</button>
+        </>
+      )}
     </div>
   );
 }
@@ -660,7 +734,7 @@ function GlobalStyles() {
       /* ── otp ── */
       .otp-row { display: flex; gap: 8px; margin-bottom: 20px; }
       .otp-box {
-        flex: 1; height: 52px;
+        flex: 1; height: 52px; min-width: 0; width: 0;
         background: rgba(255,255,255,0.04);
         border: 1px solid var(--border); border-radius: var(--radius);
         text-align: center; font-size: 22px; font-weight: 700;
